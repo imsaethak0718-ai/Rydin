@@ -34,10 +34,10 @@ export const useRealtimeRides = (filters?: {
       try {
         setLoading(true);
 
-        // Try to fetch rides with profile join
+        // Fetch rides first (without joins to avoid relationship cache issues)
         let query = supabase
           .from("rides")
-          .select("*, profiles!rides_host_id_fkey(name, trust_score, department)");
+          .select("id, source, destination, date, time, seats_total, seats_taken, estimated_fare, girls_only, flight_train, host_id, status, created_at");
 
         if (filters?.status && filters.status.length > 0) {
           query = query.in("status", filters.status);
@@ -53,7 +53,7 @@ export const useRealtimeRides = (filters?: {
           query = query.ilike("source", `%${filters.source}%`);
         }
 
-        const { data, error: fetchError } = await query.order("created_at", {
+        const { data: ridesData, error: fetchError } = await query.order("created_at", {
           ascending: false,
         });
 
@@ -79,7 +79,32 @@ export const useRealtimeRides = (filters?: {
           }
         }
 
-        setRides(data as unknown as RideWithHost[]);
+        // Fetch profiles for all hosts
+        if (ridesData && ridesData.length > 0) {
+          const hostIds = [...new Set(ridesData.map(r => r.host_id))];
+          const { data: profilesData, error: profilesError } = await supabase
+            .from("profiles")
+            .select("id, name, trust_score, department")
+            .in("id", hostIds);
+
+          if (!profilesError && profilesData) {
+            // Create a map of profiles by ID
+            const profilesMap = new Map(profilesData.map(p => [p.id, p]));
+
+            // Merge profiles into rides
+            const ridesWithProfiles = ridesData.map(ride => ({
+              ...ride,
+              profiles: profilesMap.get(ride.host_id) || null
+            }));
+
+            setRides(ridesWithProfiles as unknown as RideWithHost[]);
+          } else {
+            setRides(ridesData as unknown as RideWithHost[]);
+          }
+        } else {
+          setRides([]);
+        }
+
         setError(null);
       } catch (err) {
         let errorDetail = "Unknown error";
@@ -155,9 +180,10 @@ export const useRealtimeRideMembers = (rideId: string) => {
   useEffect(() => {
     const fetchMembers = async () => {
       try {
-        const { data, error } = await supabase
+        // Fetch members without join first
+        const { data: membersData, error } = await supabase
           .from("ride_members")
-          .select("*, profiles:user_id(name, trust_score, department, phone)")
+          .select("id, user_id, joined_at, payment_status, ride_id")
           .eq("ride_id", rideId);
 
         if (error) {
@@ -165,7 +191,32 @@ export const useRealtimeRideMembers = (rideId: string) => {
           console.error("Error fetching members:", errorMsg);
           throw error;
         }
-        setMembers(data || []);
+
+        // Fetch profiles for all members
+        if (membersData && membersData.length > 0) {
+          const userIds = membersData.map(m => m.user_id);
+          const { data: profilesData, error: profilesError } = await supabase
+            .from("profiles")
+            .select("id, name, trust_score, department, phone")
+            .in("id", userIds);
+
+          if (!profilesError && profilesData) {
+            // Create a map of profiles by ID
+            const profilesMap = new Map(profilesData.map(p => [p.id, p]));
+
+            // Merge profiles into members
+            const membersWithProfiles = membersData.map(member => ({
+              ...member,
+              profiles: profilesMap.get(member.user_id) || null
+            }));
+
+            setMembers(membersWithProfiles);
+          } else {
+            setMembers(membersData);
+          }
+        } else {
+          setMembers([]);
+        }
       } catch (err) {
         const errorDetail = err instanceof Error
           ? err.message

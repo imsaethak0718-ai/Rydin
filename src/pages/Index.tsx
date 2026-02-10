@@ -162,11 +162,19 @@ const Index = () => {
             <div className="bg-red-100 p-3 rounded font-mono text-xs overflow-auto max-h-24">
               {ridesError.message}
             </div>
+            <div className="text-xs space-y-1 bg-red-50 p-2 rounded border border-red-200">
+              <p className="font-semibold text-red-900">Quick Fix:</p>
+              <p>1. Open browser console (F12)</p>
+              <p>2. Type: <code className="bg-red-100 px-1">debugSupabase()</code> and press Enter</p>
+              <p>3. Look for ❌ errors in the output</p>
+              <p>4. Fix the issue indicated by the error</p>
+            </div>
             <div className="text-xs space-y-1">
-              <p>✓ Check browser console (F12) for detailed error</p>
-              <p>✓ Ensure SQL migrations were run in Supabase</p>
-              <p>✓ Verify rides table exists with proper columns</p>
-              <p>✓ Check RLS policies are configured</p>
+              <p>Common issues:</p>
+              <p>✓ SQL migrations not run in Supabase</p>
+              <p>✓ Rides table missing or not accessible</p>
+              <p>✓ RLS policies blocking access</p>
+              <p>✓ Foreign key relationships misconfigured</p>
             </div>
           </motion.div>
         )}

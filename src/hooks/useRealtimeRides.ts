@@ -33,6 +33,8 @@ export const useRealtimeRides = (filters?: {
     const fetchRides = async () => {
       try {
         setLoading(true);
+
+        // Try to fetch rides with profile join
         let query = supabase
           .from("rides")
           .select("*, profiles!rides_host_id_fkey(name, trust_score, department)");
@@ -56,20 +58,40 @@ export const useRealtimeRides = (filters?: {
         });
 
         if (fetchError) {
-          const errorMsg = fetchError.message || JSON.stringify(fetchError);
-          console.error("Supabase fetch error:", errorMsg);
+          const errorMsg = fetchError?.message || fetchError?.error_description || String(fetchError);
+          const errorCode = (fetchError as any)?.code;
+          const errorStatus = (fetchError as any)?.status;
+
+          console.error("Supabase fetch error - message:", errorMsg);
+          console.error("Supabase fetch error - code:", errorCode);
+          console.error("Supabase fetch error - status:", errorStatus);
           console.error("Full error object:", fetchError);
-          throw new Error(`Supabase: ${errorMsg}`);
+
+          // Provide specific guidance based on error
+          if (errorStatus === 404) {
+            throw new Error("Rides table not found. Did you run the SQL migrations?");
+          } else if (errorStatus === 403) {
+            throw new Error("Access denied - RLS policies may be blocking read access");
+          } else if (errorMsg.includes("relation") && errorMsg.includes("does not exist")) {
+            throw new Error(`Database table error: ${errorMsg}`);
+          } else {
+            throw new Error(`Supabase: ${errorMsg}`);
+          }
         }
+
         setRides(data as unknown as RideWithHost[]);
         setError(null);
       } catch (err) {
-        const errorDetail = err instanceof Error
-          ? err.message
-          : err && typeof err === 'object'
-            ? JSON.stringify(err)
-            : String(err);
-        console.error("useRealtimeRides error details:", errorDetail);
+        let errorDetail = "Unknown error";
+        if (err instanceof Error) {
+          errorDetail = err.message;
+        } else if (err && typeof err === 'object') {
+          errorDetail = (err as any).message || (err as any).error_description || JSON.stringify(err);
+        } else {
+          errorDetail = String(err);
+        }
+        console.error("useRealtimeRides caught error:", errorDetail);
+        console.error("Full error object in catch:", err);
         setError(new Error(`Failed to fetch rides: ${errorDetail}`));
       } finally {
         setLoading(false);

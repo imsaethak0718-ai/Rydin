@@ -16,13 +16,18 @@ export const debugSupabase = async () => {
 
     // 2. Check rides table exists
     console.log("\n2️⃣  Checking rides table...");
-    const { data: ridesData, error: ridesError, count: ridesCount } = await supabase
+    const ridesQuery = supabase
       .from("rides")
       .select("*", { count: "exact", head: true });
-    
+
+    console.log("   Query URL:", (ridesQuery as any).url);
+    const { data: ridesData, error: ridesError, count: ridesCount } = await ridesQuery;
+
     if (ridesError) {
       console.error("❌ Rides table error:", ridesError.message);
-      console.error("   Details:", ridesError);
+      console.error("   Code:", (ridesError as any).code);
+      console.error("   Status:", (ridesError as any).status);
+      console.error("   Full error:", ridesError);
     } else {
       console.log("✅ Rides table exists");
       console.log(`   Total rides: ${ridesCount}`);
@@ -67,16 +72,38 @@ export const debugSupabase = async () => {
       console.log(`   Total messages: ${messagesCount}`);
     }
 
-    // 6. Test a simple query with joins
-    console.log("\n6️⃣  Testing ride query with joins...");
+    // 6. Test a simple query without joins first
+    console.log("\n6️⃣  Testing simple ride query (no joins)...");
+    const { data: simpleRides, error: simpleError } = await supabase
+      .from("rides")
+      .select("id, source, destination, host_id")
+      .limit(1);
+
+    if (simpleError) {
+      console.error("❌ Simple query error:", simpleError.message);
+      console.error("   Status:", (simpleError as any).status);
+    } else {
+      console.log("✅ Simple queries work");
+      if (simpleRides && simpleRides.length > 0) {
+        console.log("   Sample ride:", simpleRides[0]);
+      } else {
+        console.log("   (No rides in database yet)");
+      }
+    }
+
+    // 7. Test query with joins
+    console.log("\n7️⃣  Testing ride query with joins...");
     const { data: testRides, error: joinError } = await supabase
       .from("rides")
       .select("id, source, destination, profiles!rides_host_id_fkey(name, trust_score)")
       .limit(1);
-    
+
     if (joinError) {
       console.error("❌ Join query error:", joinError.message);
+      console.error("   Code:", (joinError as any).code);
+      console.error("   Status:", (joinError as any).status);
       console.error("   This means the foreign key or RLS policies might be misconfigured");
+      console.error("   Full error:", joinError);
     } else {
       console.log("✅ Join queries work");
       if (testRides && testRides.length > 0) {

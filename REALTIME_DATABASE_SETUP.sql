@@ -53,13 +53,10 @@ CREATE POLICY "All users can view rides"
 ON rides FOR SELECT
 USING (auth.uid() IS NOT NULL);
 
--- INSERT: Users can create rides (host_id must be their ID or 'system')
+-- INSERT: Users can create rides (host_id must be their ID)
 CREATE POLICY "Users can create rides"
 ON rides FOR INSERT
-WITH CHECK (
-  auth.uid() = host_id OR
-  host_id = 'system'::uuid
-);
+WITH CHECK (auth.uid() = host_id);
 
 -- UPDATE: Users can update their own rides
 CREATE POLICY "Users can update own rides"

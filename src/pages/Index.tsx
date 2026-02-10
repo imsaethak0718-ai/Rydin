@@ -9,47 +9,26 @@ import PlatformDisclaimer from "@/components/PlatformDisclaimer";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { joinRideAtomic, isUserInRide, calculateRideSavings } from "@/lib/database";
+import { useRealtimeRides } from "@/hooks/useRealtimeRides";
+import { joinRideAtomic, calculateRideSavings } from "@/lib/database";
 
 const filters = ["All", "Airport", "Station", "Girls Only"];
 
-interface RideWithHost {
-  id: string;
-  source: string;
-  destination: string;
-  date: string;
-  time: string;
-  seats_total: number;
-  seats_taken: number;
-  estimated_fare: number;
-  girls_only: boolean;
-  flight_train: string | null;
-  host_id: string;
-  status: string;
-  profiles: { name: string; trust_score: number; department: string | null } | null;
-}
-
 const Index = () => {
   const [activeFilter, setActiveFilter] = useState("All");
-  const [rides, setRides] = useState<RideWithHost[]>([]);
-  const [loading, setLoading] = useState(true);
   const [userRides, setUserRides] = useState<Set<string>>(new Set());
   const [totalSavings, setTotalSavings] = useState(0);
   const { session, user } = useAuth();
   const { toast } = useToast();
 
-  const fetchRides = async () => {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from("rides")
-      .select("*, profiles!rides_host_id_fkey(name, trust_score, department)")
-      .in("status", ["open", "full", "locked"])
-      .order("created_at", { ascending: false });
+  // Use real-time rides hook
+  const { rides, loading } = useRealtimeRides({
+    status: ["open", "full", "locked"],
+  });
 
-    if (!error && data) {
-      setRides(data as unknown as RideWithHost[]);
-
-      // Fetch user's ride memberships
+  // Fetch user's ride memberships
+  useEffect(() => {
+    const fetchUserRides = async () => {
       if (session?.user) {
         const { data: memberships } = await supabase
           .from("ride_members")
@@ -60,19 +39,39 @@ const Index = () => {
           setUserRides(new Set(memberships.map((m) => m.ride_id)));
         }
       }
+    };
 
-      // Calculate total savings
-      const savings = data.reduce((sum, ride) => {
-        return sum + calculateRideSavings(ride.estimated_fare, ride.seats_total, ride.seats_taken);
-      }, 0);
-      setTotalSavings(savings);
-    }
-    setLoading(false);
-  };
+    fetchUserRides();
 
+    // Subscribe to ride_members changes for current user
+    const subscription = supabase
+      .channel(`user-rides-${session?.user?.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "ride_members",
+          filter: `user_id=eq.${session?.user?.id}`,
+        },
+        () => {
+          fetchUserRides();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [session?.user?.id]);
+
+  // Calculate savings whenever rides change
   useEffect(() => {
-    fetchRides();
-  }, []);
+    const savings = rides.reduce((sum, ride) => {
+      return sum + calculateRideSavings(ride.estimated_fare, ride.seats_total, ride.seats_taken);
+    }, 0);
+    setTotalSavings(savings);
+  }, [rides]);
 
   const filteredRides = rides.filter((ride) => {
     if (activeFilter === "Airport") return ride.destination.toLowerCase().includes("airport");

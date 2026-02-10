@@ -1,32 +1,16 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowLeft, Search as SearchIcon, MapPin, Calendar, Users, IndianRupee } from "lucide-react";
+import { ArrowLeft, Search as SearchIcon, MapPin, Calendar, IndianRupee } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import RideCard from "@/components/RideCard";
 import BottomNav from "@/components/BottomNav";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { useRealtimeRides } from "@/hooks/useRealtimeRides";
 import { joinRideAtomic } from "@/lib/database";
-
-interface RideWithHost {
-  id: string;
-  source: string;
-  destination: string;
-  date: string;
-  time: string;
-  seats_total: number;
-  seats_taken: number;
-  estimated_fare: number;
-  girls_only: boolean;
-  flight_train: string | null;
-  host_id: string;
-  status: string;
-  profiles: { name: string; trust_score: number; department: string | null } | null;
-}
 
 const Search = () => {
   const navigate = useNavigate();
@@ -38,10 +22,14 @@ const Search = () => {
   const [date, setDate] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [girlsOnly, setGirlsOnly] = useState(false);
-  const [rides, setRides] = useState<RideWithHost[]>([]);
-  const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [userRides, setUserRides] = useState<Set<string>>(new Set());
+  const [filteredRides, setFilteredRides] = useState<any[]>([]);
+
+  // Use real-time rides hook for all rides
+  const { rides: allRides, loading } = useRealtimeRides({
+    status: ["open", "full", "locked"],
+  });
 
   // Popular routes for quick access
   const popularRoutes = [
@@ -51,34 +39,42 @@ const Search = () => {
     { from: "SRM Campus", to: "CMBT Bus Stand" },
   ];
 
-  const handleSearch = async () => {
-    if (!source.trim() || !destination.trim()) {
-      toast({ title: "Please fill in source and destination", variant: "destructive" });
-      return;
+  // Filter rides based on search criteria
+  useEffect(() => {
+    if (searched && allRides.length > 0) {
+      let filtered = allRides;
+
+      if (source.trim()) {
+        filtered = filtered.filter((ride) =>
+          ride.source.toLowerCase().includes(source.toLowerCase())
+        );
+      }
+
+      if (destination.trim()) {
+        filtered = filtered.filter((ride) =>
+          ride.destination.toLowerCase().includes(destination.toLowerCase())
+        );
+      }
+
+      if (date) {
+        filtered = filtered.filter((ride) => ride.date === date);
+      }
+
+      if (maxPrice) {
+        filtered = filtered.filter((ride) => ride.estimated_fare <= parseFloat(maxPrice));
+      }
+
+      if (girlsOnly) {
+        filtered = filtered.filter((ride) => ride.girls_only);
+      }
+
+      setFilteredRides(filtered);
     }
+  }, [source, destination, date, maxPrice, girlsOnly, allRides, searched]);
 
-    setLoading(true);
-    setSearched(true);
-
-    try {
-      let query = supabase
-        .from("rides")
-        .select("*, profiles!rides_host_id_fkey(name, trust_score, department)")
-        .ilike("source", `%${source}%`)
-        .ilike("destination", `%${destination}%`)
-        .in("status", ["open", "full", "locked"]);
-
-      if (date) query = query.eq("date", date);
-      if (maxPrice) query = query.lte("estimated_fare", parseFloat(maxPrice));
-      if (girlsOnly) query = query.eq("girls_only", true);
-
-      const { data, error } = await query.order("created_at", { ascending: false });
-
-      if (error) throw error;
-
-      setRides(data as unknown as RideWithHost[]);
-
-      // Fetch user's ride memberships
+  // Fetch user's ride memberships
+  useEffect(() => {
+    const fetchUserRides = async () => {
       if (session?.user) {
         const { data: memberships } = await supabase
           .from("ride_members")
@@ -89,11 +85,18 @@ const Search = () => {
           setUserRides(new Set(memberships.map((m) => m.ride_id)));
         }
       }
-    } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+    };
+
+    fetchUserRides();
+  }, [session?.user]);
+
+  const handleSearch = () => {
+    if (!source.trim() || !destination.trim()) {
+      toast({ title: "Please fill in source and destination", variant: "destructive" });
+      return;
     }
 
-    setLoading(false);
+    setSearched(true);
   };
 
   const handleJoin = async (id: string) => {
@@ -109,7 +112,7 @@ const Search = () => {
 
       toast({ title: "Ride joined!", description: "You've been added to this ride group." });
       setUserRides((prev) => new Set([...prev, id]));
-      handleSearch(); // Refresh results
+      // Real-time update will happen automatically through the hook
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     }
@@ -194,9 +197,9 @@ const Search = () => {
             </label>
           </div>
 
-          <Button onClick={handleSearch} disabled={loading} className="w-full h-12 sm:h-11">
+          <Button onClick={handleSearch} className="w-full h-12 sm:h-11">
             <SearchIcon className="w-4 h-4 mr-2" />
-            {loading ? "Searching..." : "Search Rides"}
+            Search Rides
           </Button>
         </div>
 
@@ -232,11 +235,11 @@ const Search = () => {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <p className="text-sm text-muted-foreground">
-                {loading ? "Loading..." : `${rides.length} ride${rides.length !== 1 ? "s" : ""} found`}
+                {`${filteredRides.length} ride${filteredRides.length !== 1 ? "s" : ""} found`}
               </p>
             </div>
 
-            {rides.length === 0 ? (
+            {filteredRides.length === 0 ? (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -247,7 +250,7 @@ const Search = () => {
                 <p className="text-sm">Try different search criteria</p>
               </motion.div>
             ) : (
-              rides.map((ride, i) => (
+              filteredRides.map((ride, i) => (
                 <RideCard
                   key={ride.id}
                   ride={{

@@ -4,7 +4,8 @@ import { X, Users, MapPin, Calendar, Clock, Shield, Share2, Phone, AlertCircle, 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { getRideMembers, getRideHost, generateRideShareLink } from "@/lib/database";
+import { getRideHost, generateRideShareLink } from "@/lib/database";
+import { useRealtimeRideMembers } from "@/hooks/useRealtimeRides";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -26,51 +27,31 @@ interface RideDetailsModalProps {
   };
 }
 
-interface Member {
-  id: string;
-  user_id: string;
-  joined_at: string;
-  payment_status: string;
-  profiles: {
-    id: string;
-    name: string;
-    trust_score: number;
-    department: string;
-    gender: string;
-    phone: string;
-  };
-}
-
 const RideDetailsModal = ({ rideId, open, onOpenChange, ride }: RideDetailsModalProps) => {
-  const [members, setMembers] = useState<Member[]>([]);
   const [hostInfo, setHostInfo] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
   const { toast } = useToast();
   const { user } = useAuth();
+
+  // Use real-time members hook
+  const { members, loading: membersLoading } = useRealtimeRideMembers(rideId);
 
   const isHost = user?.id === ride.host_id;
   const isMember = members.some((m) => m.user_id === user?.id);
 
   useEffect(() => {
     if (open) {
-      fetchRideDetails();
+      fetchHostInfo();
     }
   }, [open, rideId]);
 
-  const fetchRideDetails = async () => {
-    setLoading(true);
+  const fetchHostInfo = async () => {
     try {
-      const [membersData, hostData] = await Promise.all([
-        getRideMembers(rideId),
-        getRideHost(rideId),
-      ]);
-      setMembers(membersData as unknown as Member[]);
+      const hostData = await getRideHost(rideId);
       setHostInfo(hostData);
     } catch (error) {
-      console.error("Error fetching ride details:", error);
+      console.error("Error fetching host info:", error);
       toast({ title: "Error", description: "Failed to load ride details", variant: "destructive" });
     }
-    setLoading(false);
   };
 
   const handleShare = () => {
@@ -89,7 +70,7 @@ const RideDetailsModal = ({ rideId, open, onOpenChange, ride }: RideDetailsModal
           <DialogTitle className="text-xl sm:text-2xl">Ride Details</DialogTitle>
         </DialogHeader>
 
-        {loading ? (
+        {membersLoading ? (
           <div className="py-8 text-center text-muted-foreground">Loading...</div>
         ) : (
           <div className="space-y-4">

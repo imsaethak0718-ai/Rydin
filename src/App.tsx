@@ -21,8 +21,8 @@ import NotFound from "./pages/NotFound";
 const queryClient = new QueryClient();
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-  const { isAuthenticated, user, isLoading, isPhoneVerified } = useAuth();
-  
+  const { isAuthenticated, user, isLoading } = useAuth();
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -30,25 +30,21 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
       </div>
     );
   }
-  
+
   if (!isAuthenticated) {
     return <Navigate to="/auth" replace />;
   }
-  
-  if (!isPhoneVerified) {
-    return <Navigate to="/sms-verification" replace />;
-  }
-  
+
   if (user && !user.profile_complete) {
     return <Navigate to="/profile-setup" replace />;
   }
-  
+
   return <>{children}</>;
 };
 
 const AuthRoute = ({ children }: { children: React.ReactNode }) => {
-  const { isAuthenticated, user, isLoading, isPhoneVerified } = useAuth();
-  
+  const { isAuthenticated, user, isLoading } = useAuth();
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -56,17 +52,12 @@ const AuthRoute = ({ children }: { children: React.ReactNode }) => {
       </div>
     );
   }
-  
-  // If user is fully authenticated, redirect to home
-  if (isAuthenticated && isPhoneVerified && user?.profile_complete) {
+
+  // If user is fully authenticated with profile complete, redirect to home
+  if (isAuthenticated && user?.profile_complete) {
     return <Navigate to="/" replace />;
   }
-  
-  // If user is authenticated but phone not verified, let them go to SMS verification
-  if (isAuthenticated && !isPhoneVerified) {
-    return <>{children}</>;
-  }
-  
+
   return <>{children}</>;
 };
 

@@ -16,7 +16,7 @@ const Auth = () => {
     setIsLoading(true);
     try {
       await loginWithGoogle();
-      navigate("/sms-verification");
+      navigate("/profile-setup");
     } catch (err: any) {
       toast({
         title: "Login Failed",

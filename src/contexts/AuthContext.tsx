@@ -23,8 +23,9 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
 
-  // Google OAuth
-  loginWithGoogle: () => Promise<void>;
+  // Email/Password Auth
+  signUp: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<void>;
 
   // Profile
   logout: () => Promise<void>;
@@ -126,20 +127,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // Google OAuth Login
-  const loginWithGoogle = async () => {
+  // Email/Password Sign Up
+  const signUp = async (email: string, password: string) => {
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
         options: {
-          redirectTo: `${window.location.origin}/auth-callback`,
+          emailRedirectTo: `${window.location.origin}`,
         }
       });
 
       if (error) throw error;
     } catch (error: any) {
-      console.error("Google login error:", error);
-      throw new Error(error.message || "Failed to login with Google");
+      console.error("Sign up error:", error);
+      throw new Error(error.message || "Failed to create account");
+    }
+  };
+
+  // Email/Password Login
+  const login = async (email: string, password: string) => {
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) throw error;
+    } catch (error: any) {
+      console.error("Login error:", error);
+      throw new Error(error.message || "Failed to login");
     }
   };
 
@@ -190,7 +207,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         session,
         isAuthenticated: !!session?.user,
         isLoading,
-        loginWithGoogle,
+        signUp,
+        login,
         logout,
         updateProfile,
         refreshProfile,

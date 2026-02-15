@@ -267,6 +267,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         updated_at: new Date().toISOString(),
       };
 
+      // Force immediate local update to prevent UI flicker/redirects
+      setUser((prev) => prev ? { ...prev, ...updates } as Profile : null);
+
       // Try to update Supabase with a timeout race
       // If it hangs for >2 seconds, we just proceed
       const updatePromise = supabase
@@ -275,14 +278,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .eq("id", session.user.id);
 
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Update timed out")), 2000)
+        setTimeout(() => reject(new Error("Update timed out")), 10000)
       );
 
       try {
         const { error } = await Promise.race([updatePromise, timeoutPromise]) as any;
 
         if (error) {
-          console.error("❌ Database update failed (RLS blocking?):", error);
+          console.error("❌ Database update failed:", error);
+          // If we have a specific RLS error, we might want to alert the user/dev
+          if (error.code === '42501') console.error("🛑 RLS Policy Violation - Check Table Permissions");
         } else {
           console.log("✅ Database update successful");
         }

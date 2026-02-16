@@ -1,4 +1,5 @@
 import { useState } from "react";
+import BottomNav from "@/components/BottomNav";
 import { motion } from "framer-motion";
 import { MapPin, Clock, Users, ArrowRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -453,6 +454,8 @@ const Hopper = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <BottomNav />
     </div>
   );
 };

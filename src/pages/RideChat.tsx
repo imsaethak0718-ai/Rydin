@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Send, MapPin, Info } from "lucide-react";
+import { ArrowLeft, Send, MapPin, Info, Shield } from "lucide-react";
+import SafetyHub from "@/components/SafetyHub";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/contexts/AuthContext";
@@ -15,6 +16,7 @@ const RideChat = () => {
     const { user } = useAuth();
     const [newMessage, setNewMessage] = useState("");
     const [rideInfo, setRideInfo] = useState<any>(null);
+    const [safetyOpen, setSafetyOpen] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
 
     const { messages, loading } = useRealtimeRideMessages(rideId || "");
@@ -75,11 +77,26 @@ const RideChat = () => {
                             <MapPin className="w-2 h-2" /> {rideInfo?.source || "Loading..."}
                         </p>
                     </div>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-indigo-600 hover:bg-red-50 hover:text-red-600 transition-colors"
+                        onClick={() => setSafetyOpen(true)}
+                    >
+                        <Shield className="w-4 h-4" />
+                    </Button>
                     <Button variant="ghost" size="icon" className="h-8 w-8">
                         <Info className="w-4 h-4" />
                     </Button>
                 </div>
             </header>
+
+            <SafetyHub
+                open={safetyOpen}
+                onOpenChange={setSafetyOpen}
+                rideId={rideId}
+                rideInfo={rideInfo}
+            />
 
             {/* Messages Area */}
             <main
@@ -116,8 +133,8 @@ const RideChat = () => {
                                         </span>
                                     )}
                                     <div className={`max-w-[80%] px-4 py-2 rounded-2xl text-sm shadow-sm ${isOwn
-                                            ? "bg-primary text-primary-foreground rounded-tr-none"
-                                            : "bg-card border border-border rounded-tl-none"
+                                        ? "bg-primary text-primary-foreground rounded-tr-none"
+                                        : "bg-card border border-border rounded-tl-none"
                                         }`}>
                                         {msg.content}
                                     </div>

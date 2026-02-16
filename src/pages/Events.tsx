@@ -1,4 +1,5 @@
 import { useState } from "react";
+import BottomNav from "@/components/BottomNav";
 import { motion } from "framer-motion";
 import { MapPin, Calendar, Clock, Users, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -82,11 +83,10 @@ const Events = () => {
               <button
                 key={cat}
                 onClick={() => setFilter(cat)}
-                className={`px-4 py-2 rounded-lg whitespace-nowrap text-sm font-medium transition-colors ${
-                  filter === cat
+                className={`px-4 py-2 rounded-lg whitespace-nowrap text-sm font-medium transition-colors ${filter === cat
                     ? "bg-primary text-primary-foreground"
                     : "bg-muted text-muted-foreground hover:bg-muted-foreground/20"
-                }`}
+                  }`}
               >
                 {cat.charAt(0).toUpperCase() + cat.slice(1).replace("_", " ")}
               </button>
@@ -141,6 +141,8 @@ const Events = () => {
           onInterest={() => handleInterest(selectedEvent.id)}
         />
       )}
+
+      <BottomNav />
     </div>
   );
 };

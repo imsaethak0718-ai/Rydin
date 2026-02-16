@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import BottomNav from "@/components/BottomNav";
 import { motion } from "framer-motion";
 import { Send, Bot, User, Lightbulb } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -139,9 +140,8 @@ const AIAssistant = () => {
             className={`flex ${message.type === "user" ? "justify-end" : "justify-start"}`}
           >
             <div
-              className={`flex gap-3 max-w-xs ${
-                message.type === "user" ? "flex-row-reverse" : "flex-row"
-              }`}
+              className={`flex gap-3 max-w-xs ${message.type === "user" ? "flex-row-reverse" : "flex-row"
+                }`}
             >
               {message.type === "assistant" && (
                 <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center flex-shrink-0">
@@ -150,11 +150,10 @@ const AIAssistant = () => {
               )}
 
               <div
-                className={`rounded-lg p-3 ${
-                  message.type === "user"
+                className={`rounded-lg p-3 ${message.type === "user"
                     ? "bg-primary text-primary-foreground"
                     : "bg-muted text-foreground"
-                }`}
+                  }`}
               >
                 <p className="text-sm whitespace-pre-wrap">{message.content}</p>
               </div>
@@ -210,7 +209,7 @@ const AIAssistant = () => {
       )}
 
       {/* Input */}
-      <div className="fixed bottom-0 left-0 right-0 bg-background border-t border-border">
+      <div className="fixed bottom-16 left-0 right-0 bg-background border-t border-border">
         <div className="max-w-2xl mx-auto px-4 py-4">
           <form onSubmit={handleSendMessage} className="flex gap-2">
             <Input
@@ -231,6 +230,8 @@ const AIAssistant = () => {
           </form>
         </div>
       </div>
+
+      <BottomNav />
     </div>
   );
 };

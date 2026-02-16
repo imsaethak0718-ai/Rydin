@@ -2,6 +2,8 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { supabase } from "@/integrations/supabase/client";
 import type { User as SupabaseUser, Session } from "@supabase/supabase-js";
 
+// ─── Types ──────────────────────────────────────────────────────────────────
+
 export interface Profile {
   id: string;
   email: string;
@@ -22,12 +24,8 @@ interface AuthContextType {
   session: Session | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-
-  // Email/Password Auth
   signUp: (email: string, password: string) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
-
-  // Profile
   logout: () => Promise<void>;
   updateProfile: (data: Partial<Profile>) => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -35,175 +33,203 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// ─── Constants ──────────────────────────────────────────────────────────────
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://ylyxhdlncslvqdkhzohs.supabase.co";
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlseXhoZGxuY3NsdnFka2h6b2hzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgxMzc5OTYsImV4cCI6MjA4MzcxMzk5Nn0.0aojeH-5LFapXOVJbpAkrHFM2_zDosGI_wI9fws8wEM";
+const PROFILE_FETCH_TIMEOUT_MS = 4000;
+
+// ─── Direct REST helper (bypasses Supabase JS client & RLS hangs) ───────────
+
+async function fetchProfileViaREST(
+  userId: string,
+  accessToken: string
+): Promise<Record<string, any> | null> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), PROFILE_FETCH_TIMEOUT_MS);
+
+  try {
+    const url = `${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}&select=*`;
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      console.error("REST profile fetch failed:", response.status, response.statusText);
+      return null;
+    }
+
+    const rows = await response.json();
+    if (Array.isArray(rows) && rows.length > 0) {
+      return rows[0];
+    }
+    return null; // no profile row found
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    if (err.name === "AbortError") {
+      console.warn("⏰ Profile REST fetch timed out after", PROFILE_FETCH_TIMEOUT_MS, "ms");
+    } else {
+      console.error("REST profile fetch error:", err);
+    }
+    return null;
+  }
+}
+
+// ─── Provider ───────────────────────────────────────────────────────────────
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<Profile | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const fetchProfile = async (supabaseUserData: SupabaseUser) => {
-    let userWasSet = false; // Track if we successfully set user
+  // ──── Core: fetch or create profile ────────────────────────────────────
 
-    // FAIL-SAFE: Set a basic user profile IMMEDIATELY so the app loads
-    // We will update this with real data if the DB calls succeed.
-    const fallbackProfile: Profile = {
-      id: supabaseUserData.id,
-      email: supabaseUserData.email || "",
-      name: supabaseUserData.user_metadata?.full_name || "User",
+  const fetchProfile = async (supabaseUser: SupabaseUser, currentSession: Session) => {
+    console.log("🔄 fetchProfile started for:", supabaseUser.id);
+
+    const accessToken = currentSession.access_token;
+
+    // Step 1: Try to read profile via direct REST (immune to RLS hangs)
+    const data = await fetchProfileViaREST(supabaseUser.id, accessToken);
+
+    if (data) {
+      // Profile exists — map it
+      const profile: Profile = {
+        id: data.id,
+        email: data.email || supabaseUser.email || "",
+        name: data.name || supabaseUser.user_metadata?.full_name || "",
+        phone: data.phone,
+        department: data.department,
+        year: data.year,
+        gender: data.gender,
+        emergency_contact_name: data.emergency_contact_name,
+        emergency_contact_phone: data.emergency_contact_phone,
+        trust_score: data.trust_score ?? 4.0,
+        profile_complete: !!data.profile_complete,
+        phone_verified: !!data.phone_verified,
+      };
+      setUser(profile);
+      console.log("✅ Profile loaded. profile_complete =", profile.profile_complete);
+      return;
+    }
+
+    // Step 2: REST returned null — either timed out, RLS blocked, or new user.
+    // Try to create a new profile (upsert on conflict).
+    console.log("📝 No profile found via REST. Attempting upsert for new user...");
+
+    const newProfile: Profile = {
+      id: supabaseUser.id,
+      email: supabaseUser.email || "",
+      name: supabaseUser.user_metadata?.full_name || "User",
       trust_score: 4.0,
       profile_complete: false,
       phone_verified: false,
     };
-    setUser(fallbackProfile);
-    userWasSet = true; // We have set a user, so finally block won't overwrite it unnecessarily
-    console.log("✅ Fallback profile set immediately to unblock loading");
 
+    // Use direct REST for the upsert too, to avoid the same RLS hang
     try {
-      console.log("🔄 Fetching real profile for:", supabaseUserData.id);
+      const upsertUrl = `${SUPABASE_URL}/rest/v1/profiles`;
+      const upsertController = new AbortController();
+      const upsertTimeout = setTimeout(() => upsertController.abort(), 4000);
 
-      // CRITICAL: Ensure user exists in BOTH users and profiles tables
-      // hoppers table references users.id, so we must have a record there first
-      const { error: usersError } = await supabase.from("users").upsert({
-        id: supabaseUserData.id,
-        email: supabaseUserData.email || "",
-        first_name: supabaseUserData.user_metadata?.full_name?.split(" ")[0] || "User",
-        last_name: supabaseUserData.user_metadata?.full_name?.split(" ").slice(1).join(" ") || "",
-        trust_score: 100,
-        account_status: "active",
-      }, { onConflict: 'id' });
-
-      if (usersError) {
-        console.error("❌ Users table error:", usersError);
-      } else {
-        console.log("✅ Users table OK");
-      }
-
-      const { data } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", supabaseUserData.id)
-        .maybeSingle();
-
-      if (data) {
-        // Check if we have a local override for profile completion
-        const localCompletion = localStorage.getItem(`profile_complete_${supabaseUserData.id}`) === 'true';
-
-        const profileData: Profile = {
-          id: data.id,
-          email: supabaseUserData.email || "",
-          name: data.name || "",
-          phone: data.phone,
-          department: data.department,
-          year: data.year,
-          gender: data.gender,
-          emergency_contact_name: data.emergency_contact_name,
-          emergency_contact_phone: data.emergency_contact_phone,
-          trust_score: data.trust_score ?? 4.0,
-          // Trust local storage if DB says false but local says true
-          profile_complete: data.profile_complete || localCompletion || false,
-          phone_verified: data.phone_verified ?? false,
-        };
-        setUser(profileData);
-        userWasSet = true;
-        console.log("✅ Existing profile loaded", localCompletion ? "(with local override)" : "");
-      } else {
-        // New user - create profile entry
-        console.log("📝 Creating new profile for new user");
-        const localCompletion = localStorage.getItem(`profile_complete_${supabaseUserData.id}`) === 'true';
-
-        const newProfile: Profile = {
-          id: supabaseUserData.id,
-          email: supabaseUserData.email || "",
-          name: supabaseUserData.user_metadata?.full_name || "User",
-          trust_score: 4.0,
-          profile_complete: localCompletion || false,
-          phone_verified: false,
-        };
-
-        const { error: profileUpsertError } = await supabase.from("profiles").upsert({
-          id: supabaseUserData.id,
-          email: supabaseUserData.email,
-          name: supabaseUserData.user_metadata?.full_name || "User",
+      const upsertResp = await fetch(upsertUrl, {
+        method: "POST",
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          Prefer: "resolution=merge-duplicates",
+        },
+        body: JSON.stringify({
+          id: supabaseUser.id,
+          email: supabaseUser.email,
+          name: supabaseUser.user_metadata?.full_name || "User",
           trust_score: 4.0,
           profile_complete: false,
           phone_verified: false,
-        }, { onConflict: 'id' });
+        }),
+        signal: upsertController.signal,
+      });
 
-        if (profileUpsertError) {
-          console.error("❌ Profile creation failed:", profileUpsertError);
-          // CRITICAL: Still set user state so app doesn't hang
-        } else {
-          console.log("✅ Profile created successfully");
-        }
+      clearTimeout(upsertTimeout);
 
-        // ALWAYS set user, even if there were errors
-        setUser(newProfile);
-        userWasSet = true;
+      if (upsertResp.ok) {
+        console.log("✅ New profile created via REST upsert");
+      } else {
+        console.warn("⚠️ Profile upsert returned:", upsertResp.status, await upsertResp.text());
       }
-    } catch (error) {
-      console.error("❌ Critical error in fetchProfile:", error);
-    } finally {
-      // CRITICAL: If we somehow didn't set user (e.g., exception), set fallback
-      if (!userWasSet) {
-        console.log("⚠️ Setting fallback profile (user was not set)");
-        const fallbackProfile: Profile = {
-          id: supabaseUserData.id,
-          email: supabaseUserData.email || "",
-          name: supabaseUserData.user_metadata?.full_name || "User",
-          trust_score: 4.0,
-          profile_complete: false,
-          phone_verified: false,
-        };
-        setUser(fallbackProfile);
+    } catch (upsertErr: any) {
+      if (upsertErr.name === "AbortError") {
+        console.warn("⏰ Profile upsert timed out");
+      } else {
+        console.error("❌ Profile upsert error:", upsertErr);
       }
     }
+
+    setUser(newProfile);
+    console.log("🆕 Set new user profile (profile_complete = false)");
   };
 
-  // Listen to Supabase auth state
+  // ──── Auth initialization ──────────────────────────────────────────────
+
   useEffect(() => {
     let mounted = true;
 
-    // Get initial session
     const initializeAuth = async () => {
       try {
-        const { data: { session }, error } = await supabase.auth.getSession();
+        const {
+          data: { session: currentSession },
+          error,
+        } = await supabase.auth.getSession();
+
         if (error) throw error;
 
-        if (mounted) {
-          setSession(session);
-          if (session?.user) {
-            await fetchProfile(session.user);
-          }
+        if (mounted && currentSession?.user) {
+          setSession(currentSession);
+          await fetchProfile(currentSession.user, currentSession);
         }
-      } catch (error) {
-        console.error("Auth init error:", error);
+      } catch (err) {
+        console.error("Auth init error:", err);
       } finally {
         if (mounted) {
           setIsLoading(false);
+          console.log("🏁 Auth initialization complete. isLoading = false");
         }
       }
     };
 
-    // CRITICAL SAFETY: Force loading to end after 5 seconds max
-    const loadingTimeout = setTimeout(() => {
+    // Safety net: force loading to end after 6 seconds no matter what
+    const safetyTimer = setTimeout(() => {
       if (mounted) {
-        console.warn("⏰ Loading timeout reached - forcing load complete");
+        console.warn("⏰ Safety timeout reached — forcing isLoading = false");
         setIsLoading(false);
       }
-    }, 5000);
+    }, 6000);
 
-    initializeAuth().finally(() => {
-      clearTimeout(loadingTimeout);
-    });
+    initializeAuth().finally(() => clearTimeout(safetyTimer));
 
-    // Listen to auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (mounted) {
-        setSession(session);
-        if (session?.user) {
-          await fetchProfile(session.user);
-        } else {
-          setUser(null);
-        }
+    // Listen to auth changes (login, logout, token refresh)
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, newSession) => {
+      console.log("🔔 Auth state change:", event);
+      if (!mounted) return;
+
+      setSession(newSession);
+
+      if (newSession?.user) {
+        await fetchProfile(newSession.user, newSession);
+      } else {
+        setUser(null);
       }
     });
 
@@ -213,140 +239,103 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // Email/Password Sign Up
+  // ──── Auth actions ─────────────────────────────────────────────────────
+
   const signUp = async (email: string, password: string) => {
-    try {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-      });
-
-      if (error) throw error;
-    } catch (error: any) {
-      console.error("Sign up error:", error);
-      throw new Error(error.message || "Failed to create account");
-    }
+    const { error } = await supabase.auth.signUp({ email, password });
+    if (error) throw new Error(error.message);
   };
 
-  // Email/Password Login
   const login = async (email: string, password: string) => {
-    try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) throw error;
-    } catch (error: any) {
-      console.error("Login error:", error);
-      throw new Error(error.message || "Failed to login");
-    }
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw new Error(error.message);
   };
-
 
   const logout = async () => {
-    try {
-      await supabase.auth.signOut();
-      setSession(null);
-      setUser(null);
-    } catch (error) {
-      console.error("Logout error:", error);
-      throw error;
-    }
+    await supabase.auth.signOut();
+    setSession(null);
+    setUser(null);
   };
+
+  // ──── Profile update ───────────────────────────────────────────────────
 
   const updateProfile = async (data: Partial<Profile>) => {
     if (!session?.user) return;
 
-    console.log("📝 Updating profile with:", data);
+    const updates: Record<string, unknown> = {
+      ...data,
+      profile_complete: true,
+      updated_at: new Date().toISOString(),
+    };
+
+    // Optimistic local update
+    setUser((prev) => (prev ? { ...prev, ...updates } as Profile : null));
 
     try {
-      const updates: Record<string, unknown> = {
-        ...data,
-        profile_complete: true,
-        updated_at: new Date().toISOString(),
-      };
+      // Use direct REST for the update too
+      const updateUrl = `${SUPABASE_URL}/rest/v1/profiles?id=eq.${session.user.id}`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-      // Force immediate local update to prevent UI flicker/redirects
-      setUser((prev) => prev ? { ...prev, ...updates } as Profile : null);
+      const resp = await fetch(updateUrl, {
+        method: "PATCH",
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify(updates),
+        signal: controller.signal,
+      });
 
-      // Try to update Supabase with a timeout race
-      // If it hangs for >2 seconds, we just proceed
-      const updatePromise = supabase
-        .from("profiles")
-        .update(updates)
-        .eq("id", session.user.id);
+      clearTimeout(timeoutId);
 
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Update timed out")), 10000)
-      );
+      if (resp.ok) {
+        console.log("✅ Profile updated via REST");
+      } else {
+        const errText = await resp.text();
+        console.warn("⚠️ Profile update response:", resp.status, errText);
 
-      try {
-        const { error } = await Promise.race([updatePromise, timeoutPromise]) as any;
+        // Fallback: try RPC
+        console.log("🔄 Trying RPC fallback...");
+        const { error: rpcError } = await supabase.rpc("update_profile_safe", {
+          p_name: data.name || "",
+          p_department: data.department || "",
+          p_year: data.year || "",
+          p_phone: data.phone || "",
+          p_gender: (data.gender || "") as string,
+          p_emergency_contact_name: data.emergency_contact_name || "",
+          p_emergency_contact_phone: data.emergency_contact_phone || "",
+        });
 
-        if (error) throw error; // Throw to trigger fallback in catch block
-
-        console.log("✅ Database update successful");
-      } catch (err) {
-        console.warn("⚠️ Standard update timed out or failed:", err);
-        console.log("🔄 Attempting RPC fallback...");
-
-        // RPC Fallback Attempt
-        try {
-          const { error: rpcError } = await supabase.rpc('update_profile_safe', {
-            p_name: data.name || "",
-            p_department: data.department || "",
-            p_year: data.year || "",
-            p_phone: data.phone || "",
-            p_gender: (data.gender || "") as string,
-            p_emergency_contact_name: data.emergency_contact_name || "",
-            p_emergency_contact_phone: data.emergency_contact_phone || ""
-          });
-
-          if (rpcError) {
-            console.error("❌ RPC fallback also failed:", rpcError);
-            if (rpcError.code === '42501') {
-              console.error("🛑 RLS Policy Violation - Check Table Permissions");
-            }
-          } else {
-            console.log("✅ RPC fallback update successful");
-          }
-        } catch (rpcEx) {
-          console.error("❌ RPC execution error:", rpcEx);
+        if (rpcError) {
+          console.error("❌ RPC fallback failed:", rpcError);
+        } else {
+          console.log("✅ Profile updated via RPC fallback");
         }
       }
-
-      // Always update local state
-      setUser((prev) => prev ? { ...prev, ...updates } as Profile : null);
-
-      // PERSIST LOCALLY: Save completion status to localStorage as backup
-      if (session?.user?.id) {
-        const key = `profile_complete_${session.user.id}`;
-        localStorage.setItem(key, 'true');
-        console.log(`✅ Writes local persistence: [${key}] = true`);
+    } catch (err: any) {
+      if (err.name === "AbortError") {
+        console.warn("⏰ Profile update timed out — local state already updated");
+      } else {
+        console.error("❌ Profile update error:", err);
       }
+    }
 
-    } catch (error) {
-      console.error("Profile update exception:", error);
-      // Fallback: update local state anyway to unblock user
-      const updates: Record<string, unknown> = {
-        ...data,
-        profile_complete: true,
-      };
-      setUser((prev) => prev ? { ...prev, ...updates } as Profile : null);
+    // Always ensure local state reflects completion
+    setUser((prev) => (prev ? { ...prev, ...updates } as Profile : null));
+  };
 
-      // PERSIST LOCALLY even on error
-      if (session?.user?.id) {
-        const key = `profile_complete_${session.user.id}`;
-        localStorage.setItem(key, 'true');
-        console.log(`✅ Writes local persistence (fallback): [${key}] = true`);
-      }
+  // ──── Refresh ──────────────────────────────────────────────────────────
+
+  const refreshProfile = async () => {
+    if (session?.user) {
+      await fetchProfile(session.user, session);
     }
   };
 
-  const refreshProfile = async () => {
-    if (session?.user) await fetchProfile(session.user);
-  };
+  // ──── Render ───────────────────────────────────────────────────────────
 
   return (
     <AuthContext.Provider

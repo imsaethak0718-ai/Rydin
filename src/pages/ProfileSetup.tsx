@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { User, Phone, GraduationCap, Building, ArrowRight, AlertCircle, Camera, Check, X } from "lucide-react";
@@ -37,6 +37,12 @@ const ProfileSetup = () => {
   const { updateProfile, user } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+
+  useEffect(() => {
+    if (user?.profile_complete) {
+      navigate("/", { replace: true });
+    }
+  }, [user?.profile_complete, navigate]);
 
   const handleProfileSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
